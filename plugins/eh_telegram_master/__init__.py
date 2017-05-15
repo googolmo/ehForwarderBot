@@ -991,7 +991,7 @@ class TelegramChannel(EFBChannel):
                             reply_markup=telegram.InlineKeyboardMarkup(chat_btn_list))
         self.msg_status["%s.%s" % (chat_id, message_id)] = flag
 
-    def make_block_chat(slef, bot, tg_chat_id, tg_msg_id, callback_uid):
+    def make_block_chat(self, bot, tg_chat_id, tg_msg_id, callback_uid):
         if callback_uid.split()[0] == "offset":
             return self.chat_head_req_generate(bot, tg_chat_id, message_id=tg_msg_id,
                                                offset=int(callback_uid.split()[1]), flag=Flags.START_BLOCK_CHAT)
@@ -1018,7 +1018,7 @@ class TelegramChannel(EFBChannel):
         chat_display_name = "'%s' from '%s %s'" % (chat_display_name, chat['channel_emoji'], chat['channel_name'])
         self.msg_status.pop("%s.%s" % (tg_chat_id, tg_msg_id), None)
         self.msg_storage.pop("%s.%s" % (tg_chat_id, tg_msg_id), None)
-        txt = "Reply to this message to chat with %s." % chat_display_name
+        txt = "block chat %s(%s)." % (chat_display_name, chat_uid)
         msg_log = {"master_msg_id": "%s.%s" % (tg_chat_id, tg_msg_id),
                    "text": txt,
                    "msg_type": "Text",
