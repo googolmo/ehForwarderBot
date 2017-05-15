@@ -38,6 +38,8 @@ class Flags:
     COMMAND_PENDING = 0x31
     # Message recipient suggestions
     SUGGEST_RECIPIENT= 0x32
+    # Block chat
+    START_BLOCK_CHAT = 0x41
 
 
 class TelegramChannel(EFBChannel):
@@ -130,6 +132,7 @@ class TelegramChannel(EFBChannel):
         self.bot.dispatcher.add_handler(telegram.ext.CommandHandler("help", self.help))
         self.bot.dispatcher.add_handler(telegram.ext.CommandHandler("unlink_all", self.unlink_all))
         self.bot.dispatcher.add_handler(telegram.ext.CommandHandler("info", self.info))
+        self.bot.dispatcher.add_handler(telegram.ext.CommandHandler("block", self.start_block_chat, pass_args=True))
         self.bot.dispatcher.add_handler(
             telegram.ext.RegexHandler(r"^/(?P<id>[0-9]+)_(?P<command>[a-z0-9_-]+)", self.extra_call,
                                       pass_groupdict=True))
@@ -193,6 +196,8 @@ class TelegramChannel(EFBChannel):
             self.command_exec(bot, chat_id, msg_id, text)
         elif msg_status == Flags.SUGGEST_RECIPIENT:
             self.suggested_recipient(bot, chat_id, msg_id, text)
+        elif msg_status == Flags.START_BLOCK_CHAT:
+            self.make_block_chat(bot, chat_id, msg_id, text)
         else:
             bot.editMessageText(text="Session expired. Please try again. (SE01)",
                                 chat_id=chat_id,
@@ -906,7 +911,28 @@ class TelegramChannel(EFBChannel):
             target = update.message.from_user.id
         self.chat_head_req_generate(bot, target, filter=" ".join(args), chats=chats)
 
-    def chat_head_req_generate(self, bot, chat_id, message_id=None, offset=0, filter="", chats=None):
+    def start_block_chat(self, bot, update, args=None):
+        """
+        Send a list to for chat list generation.
+        Triggered by `/list`.
+
+        Args:
+            bot: Telegram Bot instance
+            update: Message update
+            args: Arguments from the command message
+        """
+        args = args or []
+        chats = None
+        if update.message.from_user.id != update.message.chat_id:
+            chats = db.get_chat_assoc(master_uid="%s.%s" % (self.channel_id, update.message.chat_id))
+            chats = chats or None
+        if chats:
+            target = update.message.chat_id
+        else:
+            target = update.message.from_user.id
+        self.chat_head_req_generate(bot, target, filter=" ".join(args), chats=chats, flag=Flags.START_BLOCK_CHAT)
+
+    def chat_head_req_generate(self, bot, chat_id, message_id=None, offset=0, filter="", chats=None, flag=Flags.START_CHOOSE_CHAT):
         """
         Generate the list for chat head, and update it to a message.
 
@@ -963,7 +989,47 @@ class TelegramChannel(EFBChannel):
                             chat_id=chat_id,
                             message_id=message_id,
                             reply_markup=telegram.InlineKeyboardMarkup(chat_btn_list))
-        self.msg_status["%s.%s" % (chat_id, message_id)] = Flags.START_CHOOSE_CHAT
+        self.msg_status["%s.%s" % (chat_id, message_id)] = flag
+
+    def make_block_chat(slef, bot, tg_chat_id, tg_msg_id, callback_uid):
+        if callback_uid.split()[0] == "offset":
+            return self.chat_head_req_generate(bot, tg_chat_id, message_id=tg_msg_id,
+                                               offset=int(callback_uid.split()[1]), flag=Flags.START_BLOCK_CHAT)
+        if callback_uid == Flags.CANCEL_PROCESS:
+            txt = "Cancelled."
+            self.msg_status.pop("%s.%s" % (tg_chat_id, tg_msg_id), None)
+            self.msg_storage.pop("%s.%s" % (tg_chat_id, tg_msg_id), None)
+            return bot.editMessageText(text=txt,
+                                       chat_id=tg_chat_id,
+                                       message_id=tg_msg_id)
+
+        if callback_uid[:4] != "chat":
+            txt = "Invalid parameter. (%s)" % callback_uid
+            self.msg_status.pop("%s.%s" % (tg_chat_id, tg_msg_id), None)
+            self.msg_storage.pop("%s.%s" % (tg_chat_id, tg_msg_id), None)
+            return bot.editMessageText(text=txt,
+                                       chat_id=tg_chat_id,
+                                       message_id=tg_msg_id)
+        callback_uid = int(callback_uid.split()[1])
+        chat = self.msg_storage["%s.%s" % (tg_chat_id, tg_msg_id)]['chats'][callback_uid]
+        chat_uid = "%s.%s" % (chat['channel_id'], chat['chat_uid'])
+        chat_display_name = chat['chat_name'] if chat['chat_name'] == chat['chat_alias'] else "%s (%s)" % (
+            chat['chat_alias'], chat['chat_name'])
+        chat_display_name = "'%s' from '%s %s'" % (chat_display_name, chat['channel_emoji'], chat['channel_name'])
+        self.msg_status.pop("%s.%s" % (tg_chat_id, tg_msg_id), None)
+        self.msg_storage.pop("%s.%s" % (tg_chat_id, tg_msg_id), None)
+        txt = "Reply to this message to chat with %s." % chat_display_name
+        msg_log = {"master_msg_id": "%s.%s" % (tg_chat_id, tg_msg_id),
+                   "text": txt,
+                   "msg_type": "Text",
+                   "sent_to": "master",
+                   "slave_origin_uid": chat_uid,
+                   "slave_origin_display_name": chat_display_name,
+                   "slave_member_uid": None,
+                   "slave_member_display_name": None,
+                   "slave_message_id": "__chathead__"}
+        #db.add_msg_log(**msg_log)
+        bot.editMessageText(text=txt, chat_id=tg_chat_id, message_id=tg_msg_id)
 
     def make_chat_head(self, bot, tg_chat_id, tg_msg_id, callback_uid):
         """
